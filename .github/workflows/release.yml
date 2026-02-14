@@ -25,11 +25,25 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Resolve product ref (tag if exists, else main)
+        id: product_ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if git ls-remote --exit-code --tags https://github.com/octopusos/octopusos.git "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "ref=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "Using octopusos/octopusos ref: ${TAG}"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} not found in octopusos/octopusos; falling back to main"
+          fi
+
       - name: Checkout OctopusOS product repo (manager source)
         uses: actions/checkout@v4
         with:
           repository: octopusos/octopusos
-          ref: ${{ github.ref_name }}
+          ref: ${{ steps.product_ref.outputs.ref }}
           path: octopusos-product
 
       - name: Install build deps
