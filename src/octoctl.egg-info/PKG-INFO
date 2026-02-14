@@ -1,0 +1,26 @@
+Metadata-Version: 2.4
+Name: octoctl
+Version: 0.1.0
+Summary: Local manager control CLI for OctopusOS
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# octoctl
+
+`octoctl` is a tiny local CLI that talks to the OctopusOS Manager Control API over HTTP.
+
+## Usage
+
+```bash
+octoctl status
+octoctl start
+octoctl logs --service backend --tail 200
+octoctl stop
+```
+
+Override manager base URL:
+
+```bash
+OCTOCTL_BASE=http://127.0.0.1:6110 octoctl status
+```
+

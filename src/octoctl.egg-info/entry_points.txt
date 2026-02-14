@@ -1,0 +1,2 @@
+[console_scripts]
+octoctl = octoctl.cli:main

@@ -1,0 +1,137 @@
+name: release-octoctl
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build octoctl
+        run: |
+          pyinstaller --onefile --name octoctl tools/octoctl_entry.py
+          chmod +x dist/octoctl
+
+      - name: Rename artifact + sha256
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OUT="octoctl-v${VERSION}-darwin-${{ matrix.arch }}"
+          mv dist/octoctl "$OUT"
+          shasum -a 256 "$OUT" | awk '{print $1}' > "${OUT}.sha256"
+          ls -lah
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: octoctl-${{ matrix.arch }}
+          path: |
+            octoctl-v*-darwin-${{ matrix.arch }}
+            octoctl-v*-darwin-${{ matrix.arch }}.sha256
+
+  release:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/octoctl-v*-darwin-*
+            artifacts/**/octoctl-v*-darwin-*.sha256
+
+  update-homebrew-tap:
+    name: Update Homebrew tap formula
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute sha256
+        id: shas
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARM_BIN="artifacts/octoctl-arm64/octoctl-v${VERSION}-darwin-arm64"
+          AMD_BIN="artifacts/octoctl-amd64/octoctl-v${VERSION}-darwin-amd64"
+
+          ARM_SHA=$(sha256sum "$ARM_BIN" | awk '{print $1}')
+          AMD_SHA=$(sha256sum "$AMD_BIN" | awk '{print $1}')
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
+          echo "amd_sha=$AMD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.TAP_REPO }}
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      - name: Update Formula/octoctl.rb
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.shas.outputs.version }}"
+          ARM_SHA="${{ steps.shas.outputs.arm_sha }}"
+          AMD_SHA="${{ steps.shas.outputs.amd_sha }}"
+          CLI_REPO="${{ github.repository }}"   # e.g. octopusos/octoctl
+
+          FILE="tap/Formula/octoctl.rb"
+          test -f "$FILE"
+
+          perl -0777 -pe "s/version\\s+\"[^\"]+\"/version \"${VERSION}\"/g" -i "$FILE"
+
+          perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octoctl-v[^\"]+-darwin-arm64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octoctl-v${VERSION}-darwin-arm64\"#g" -i "$FILE"
+          perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octoctl-v[^\"]+-darwin-amd64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octoctl-v${VERSION}-darwin-amd64\"#g" -i "$FILE"
+
+          perl -0777 -pe "s/(if Hardware::CPU\\.arm\\?\\s*\\n\\s*url[^\n]*\\n\\s*sha256\\s+\")([a-fA-F0-9]+|REPLACE_ME)(\")/\\1${ARM_SHA}\\3/g" -i "$FILE"
+          perl -0777 -pe "s/(else\\s*\\n\\s*url[^\n]*\\n\\s*sha256\\s+\")([a-fA-F0-9]+|REPLACE_ME)(\")/\\1${AMD_SHA}\\3/g" -i "$FILE"
+
+          echo "---- Updated formula ----"
+          sed -n '1,160p' "$FILE"
+
+      - name: Commit & push
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "octoctl-release-bot"
+          git config user.email "actions@github.com"
+          git add Formula/octoctl.rb
+          if git diff --cached --quiet; then
+            echo "No formula changes to commit."
+            exit 0
+          fi
+          git commit -m "octoctl v${{ steps.shas.outputs.version }}"
+          git push
