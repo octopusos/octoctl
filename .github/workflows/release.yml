@@ -23,24 +23,42 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
+
+      - name: Checkout OctopusOS product repo (manager source)
+        uses: actions/checkout@v4
+        with:
+          repository: octopusos/octopusos
+          ref: ${{ github.ref_name }}
+          path: octopusos-product
 
       - name: Install build deps
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          # Keep the environment explicit; manager build needs these to be included by PyInstaller.
+          pip install pyinstaller fastapi uvicorn[standard] httpx psutil
 
       - name: Build octoctl
         run: |
           pyinstaller --onefile --name octoctl tools/octoctl_entry.py
           chmod +x dist/octoctl
 
+      - name: Build octopus-manager (from product repo)
+        env:
+          OCTOCTL_PRODUCT_REPO_DIR: octopusos-product
+        run: |
+          pyinstaller --onefile --name octopus-manager tools/octopus_manager_entry.py
+          chmod +x dist/octopus-manager
+
       - name: Rename artifact + sha256
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          OUT="octoctl-v${VERSION}-darwin-${{ matrix.arch }}"
-          mv dist/octoctl "$OUT"
-          shasum -a 256 "$OUT" | awk '{print $1}' > "${OUT}.sha256"
+          OUT_OCTOCTL="octoctl-v${VERSION}-darwin-${{ matrix.arch }}"
+          OUT_MANAGER="octopus-manager-v${VERSION}-darwin-${{ matrix.arch }}"
+          mv dist/octoctl "$OUT_OCTOCTL"
+          mv dist/octopus-manager "$OUT_MANAGER"
+          shasum -a 256 "$OUT_OCTOCTL" | awk '{print $1}' > "${OUT_OCTOCTL}.sha256"
+          shasum -a 256 "$OUT_MANAGER" | awk '{print $1}' > "${OUT_MANAGER}.sha256"
           ls -lah
 
       - uses: actions/upload-artifact@v4
@@ -49,6 +67,8 @@ jobs:
           path: |
             octoctl-v*-darwin-${{ matrix.arch }}
             octoctl-v*-darwin-${{ matrix.arch }}.sha256
+            octopus-manager-v*-darwin-${{ matrix.arch }}
+            octopus-manager-v*-darwin-${{ matrix.arch }}.sha256
 
   release:
     needs: build-macos
@@ -66,6 +86,8 @@ jobs:
           files: |
             artifacts/**/octoctl-v*-darwin-*
             artifacts/**/octoctl-v*-darwin-*.sha256
+            artifacts/**/octopus-manager-v*-darwin-*
+            artifacts/**/octopus-manager-v*-darwin-*.sha256
 
   update-homebrew-tap:
     name: Update Homebrew tap formula
@@ -85,13 +107,19 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           ARM_BIN="artifacts/octoctl-arm64/octoctl-v${VERSION}-darwin-arm64"
           AMD_BIN="artifacts/octoctl-amd64/octoctl-v${VERSION}-darwin-amd64"
+          ARM_MGR="artifacts/octoctl-arm64/octopus-manager-v${VERSION}-darwin-arm64"
+          AMD_MGR="artifacts/octoctl-amd64/octopus-manager-v${VERSION}-darwin-amd64"
 
           ARM_SHA=$(sha256sum "$ARM_BIN" | awk '{print $1}')
           AMD_SHA=$(sha256sum "$AMD_BIN" | awk '{print $1}')
+          ARM_MGR_SHA=$(sha256sum "$ARM_MGR" | awk '{print $1}')
+          AMD_MGR_SHA=$(sha256sum "$AMD_MGR" | awk '{print $1}')
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
           echo "amd_sha=$AMD_SHA" >> "$GITHUB_OUTPUT"
+          echo "arm_mgr_sha=$ARM_MGR_SHA" >> "$GITHUB_OUTPUT"
+          echo "amd_mgr_sha=$AMD_MGR_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repo
         uses: actions/checkout@v4
@@ -106,6 +134,8 @@ jobs:
           VERSION="${{ steps.shas.outputs.version }}"
           ARM_SHA="${{ steps.shas.outputs.arm_sha }}"
           AMD_SHA="${{ steps.shas.outputs.amd_sha }}"
+          ARM_MGR_SHA="${{ steps.shas.outputs.arm_mgr_sha }}"
+          AMD_MGR_SHA="${{ steps.shas.outputs.amd_mgr_sha }}"
           CLI_REPO="${{ github.repository }}"   # e.g. octopusos/octoctl
 
           FILE="tap/Formula/octoctl.rb"
@@ -115,9 +145,14 @@ jobs:
 
           perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octoctl-v[^\"]+-darwin-arm64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octoctl-v${VERSION}-darwin-arm64\"#g" -i "$FILE"
           perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octoctl-v[^\"]+-darwin-amd64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octoctl-v${VERSION}-darwin-amd64\"#g" -i "$FILE"
+          perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octopus-manager-v[^\"]+-darwin-arm64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octopus-manager-v${VERSION}-darwin-arm64\"#g" -i "$FILE"
+          perl -0777 -pe "s#url\\s+\"https://github\\.com/[^/]+/[^/]+/releases/download/v[^\"]+/octopus-manager-v[^\"]+-darwin-amd64\"#url \"https://github.com/${CLI_REPO}/releases/download/v${VERSION}/octopus-manager-v${VERSION}-darwin-amd64\"#g" -i "$FILE"
 
-          perl -0777 -pe "s/(if Hardware::CPU\\.arm\\?\\s*\\n\\s*url[^\n]*\\n\\s*sha256\\s+\")([a-fA-F0-9]+|REPLACE_ME)(\")/\\1${ARM_SHA}\\3/g" -i "$FILE"
-          perl -0777 -pe "s/(else\\s*\\n\\s*url[^\n]*\\n\\s*sha256\\s+\")([a-fA-F0-9]+|REPLACE_ME)(\")/\\1${AMD_SHA}\\3/g" -i "$FILE"
+          # Update sha256 via explicit placeholders (robust against formatting changes).
+          perl -0777 -pe "s/REPLACE_ME_OCTOCTL_ARM/${ARM_SHA}/g" -i "$FILE"
+          perl -0777 -pe "s/REPLACE_ME_OCTOCTL_AMD/${AMD_SHA}/g" -i "$FILE"
+          perl -0777 -pe "s/REPLACE_ME_MANAGER_ARM/${ARM_MGR_SHA}/g" -i "$FILE"
+          perl -0777 -pe "s/REPLACE_ME_MANAGER_AMD/${AMD_MGR_SHA}/g" -i "$FILE"
 
           echo "---- Updated formula ----"
           sed -n '1,160p' "$FILE"
