@@ -99,10 +99,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/**/octoctl-v*-darwin-*
-            artifacts/**/octoctl-v*-darwin-*.sha256
-            artifacts/**/octopus-manager-v*-darwin-*
-            artifacts/**/octopus-manager-v*-darwin-*.sha256
+            # Avoid glob collisions (e.g. "octoctl-...-amd64.sha256" matching both patterns),
+            # which causes duplicate uploads and intermittent GitHub API failures.
+            artifacts/**/octoctl-v*-darwin-arm64
+            artifacts/**/octoctl-v*-darwin-amd64
+            artifacts/**/octoctl-v*-darwin-arm64.sha256
+            artifacts/**/octoctl-v*-darwin-amd64.sha256
+            artifacts/**/octopus-manager-v*-darwin-arm64
+            artifacts/**/octopus-manager-v*-darwin-amd64
+            artifacts/**/octopus-manager-v*-darwin-arm64.sha256
+            artifacts/**/octopus-manager-v*-darwin-amd64.sha256
 
   update-homebrew-tap:
     name: Update Homebrew tap formula
