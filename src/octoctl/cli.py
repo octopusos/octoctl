@@ -10,11 +10,20 @@ import urllib.request
 
 
 DEFAULT_BASE = os.environ.get("OCTOCTL_BASE", "http://127.0.0.1:6110").rstrip("/")
+DEFAULT_SOURCE = os.environ.get("OCTOCTL_SOURCE", "cli").strip() or "cli"
 
 
 def _request(method: str, path: str, *, timeout: float = 5.0) -> dict:
     url = DEFAULT_BASE + path
     req = urllib.request.Request(url, method=method)
+    req.add_header("X-OctopusOS-Source", DEFAULT_SOURCE)
+    # Helpful for debugging/proxies; best-effort only.
+    try:
+        from importlib.metadata import version as _pkg_version  # py3.8+
+
+        req.add_header("User-Agent", f"octoctl/{_pkg_version('octoctl')}")
+    except Exception:
+        req.add_header("User-Agent", "octoctl")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")

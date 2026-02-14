@@ -5,6 +5,17 @@ description = "Local manager control CLI for OctopusOS"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+license = { text = "MIT" }
+
+[project.urls]
+Homepage = "https://github.com/octopusos/octoctl"
+Repository = "https://github.com/octopusos/octoctl"
+Issues = "https://github.com/octopusos/octoctl/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pyinstaller>=6.0.0",
+]
 
 [project.scripts]
 octoctl = "octoctl.cli:main"
@@ -18,4 +29,3 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
