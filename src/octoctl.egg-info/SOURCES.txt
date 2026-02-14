@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-src/octoctl/__init__.py
-src/octoctl/cli.py
-src/octoctl.egg-info/PKG-INFO
-src/octoctl.egg-info/SOURCES.txt
-src/octoctl.egg-info/dependency_links.txt
-src/octoctl.egg-info/entry_points.txt
-src/octoctl.egg-info/top_level.txt
