@@ -16,7 +16,8 @@ jobs:
         include:
           - runner: macos-14
             arch: arm64
-          - runner: macos-13
+          # macos-13 has been retired; use the current Intel runner label.
+          - runner: macos-15-intel
             arch: amd64
     steps:
       - uses: actions/checkout@v4
